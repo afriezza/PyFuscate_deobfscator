@@ -20,6 +20,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: List files (debug)
+        run: ls -la
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -38,6 +41,7 @@ jobs:
           import bz2
           import types
           import sys
+          import traceback
 
           def recursive_disassemble(code_obj):
               instructions = list(dis.get_instructions(code_obj))
@@ -137,49 +141,78 @@ jobs:
               return second_method
 
           def stage1(obfuscated):
+              disassembled = None
+
+              # base64
               match = re.search(r'binascii.a2b_base64\(b\'(.*?)\'\)', obfuscated)
               if match:
+                  print("[+] Found base64")
                   encoded = match.group(1)
                   encoded = encoded.encode('utf-8')
                   encoded = base64.b64decode(encoded)
                   unmarshalled = marshal.loads(encoded)
                   disassembled = recursive_disassemble(unmarshalled)
 
-              match = re.search(r'lzma.decompress\(b\'(.*?)\'\)\)\)\nexcept', obfuscated)
-              if match:
-                  match = match.group(1)
-                  exec_globals = {}
-                  exec(f"match = b'{match}'", exec_globals)
-                  decompressed = lzma.decompress(exec_globals['match'])
-                  unmarshalled = marshal.loads(decompressed)
-                  disassembled = recursive_disassemble(unmarshalled)
+              # lzma
+              if not disassembled:
+                  match = re.search(r'lzma.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
+                  if match:
+                      print("[+] Found lzma")
+                      match = match.group(1)
+                      exec_globals = {}
+                      exec(f"match = b'{match}'", exec_globals)
+                      decompressed = lzma.decompress(exec_globals['match'])
+                      unmarshalled = marshal.loads(decompressed)
+                      disassembled = recursive_disassemble(unmarshalled)
 
-              match = re.search(r'bz2.decompress\(b\'(.*?)\'\)\)\)\nexcept', obfuscated)
-              if match:
-                  match = match.group(1)
-                  exec_globals = {}
-                  exec(f"match = b'{match}'", exec_globals)
-                  decompressed = bz2.decompress(exec_globals['match'])
-                  unmarshalled = marshal.loads(decompressed)
-                  disassembled = recursive_disassemble(unmarshalled)
+              # bz2
+              if not disassembled:
+                  match = re.search(r'bz2.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
+                  if match:
+                      print("[+] Found bz2")
+                      match = match.group(1)
+                      exec_globals = {}
+                      exec(f"match = b'{match}'", exec_globals)
+                      decompressed = bz2.decompress(exec_globals['match'])
+                      unmarshalled = marshal.loads(decompressed)
+                      disassembled = recursive_disassemble(unmarshalled)
 
-              match = re.search(r'gzip.decompress\(b\'(.*?)\'\)\)\)\nexcept', obfuscated)
-              if match:
-                  match = match.group(1)
-                  exec_globals = {}
-                  exec(f"match = b'{match}'", exec_globals)
-                  decompressed = gzip.decompress(exec_globals['match'])
-                  unmarshalled = marshal.loads(decompressed)
-                  disassembled = recursive_disassemble(unmarshalled)
+              # gzip
+              if not disassembled:
+                  match = re.search(r'gzip.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
+                  if match:
+                      print("[+] Found gzip")
+                      match = match.group(1)
+                      exec_globals = {}
+                      exec(f"match = b'{match}'", exec_globals)
+                      decompressed = gzip.decompress(exec_globals['match'])
+                      unmarshalled = marshal.loads(decompressed)
+                      disassembled = recursive_disassemble(unmarshalled)
 
-              match = re.search(r'zlib.decompress\(b\'(.*?)\'\)\)\)\nexcept', obfuscated)
-              if match:
-                  match = match.group(1)
-                  exec_globals = {}
-                  exec(f"match = b'{match}'", exec_globals)
-                  decompressed = zlib.decompress(exec_globals['match'])
-                  unmarshalled = marshal.loads(decompressed)
-                  disassembled = recursive_disassemble(unmarshalled)
+              # zlib
+              if not disassembled:
+                  match = re.search(r'zlib.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
+                  if match:
+                      print("[+] Found zlib")
+                      match = match.group(1)
+                      exec_globals = {}
+                      exec(f"match = b'{match}'", exec_globals)
+                      decompressed = zlib.decompress(exec_globals['match'])
+                      unmarshalled = marshal.loads(decompressed)
+                      disassembled = recursive_disassemble(unmarshalled)
+
+              if not disassembled:
+                  # Try to extract raw bytes from file (maybe already binary)
+                  print("[-] No compression found. Trying to read as marshal directly.")
+                  try:
+                      unmarshalled = marshal.loads(obfuscated.encode('latin1'))
+                      disassembled = recursive_disassemble(unmarshalled)
+                  except:
+                      pass
+
+              if not disassembled:
+                  print("[-] Failed to extract any code. Check if file is valid.")
+                  sys.exit(1)
 
               while True:
                   try:
@@ -205,15 +238,28 @@ jobs:
                   print("Usage: python deobfuscate.py <input_file>")
                   sys.exit(1)
 
-              with open(sys.argv[1], 'r') as f:
-                  obfuscated = f.read()
-
-              stage1(obfuscated)
+              try:
+                  with open(sys.argv[1], 'r', encoding='utf-8', errors='ignore') as f:
+                      obfuscated = f.read()
+                  stage1(obfuscated)
+              except Exception as e:
+                  print(f"Error: {e}")
+                  traceback.print_exc()
+                  sys.exit(1)
           EOF
 
-      - name: Run deobfuscator on iyan-en.py
+      - name: Check if input file exists
         run: |
-          python deobfuscate.py "${{ github.event.inputs.filename }}" > "${{ github.event.inputs.output_filename }}" 2>&1
+          if [ ! -f "${{ github.event.inputs.filename }}" ]; then
+            echo "❌ File ${{ github.event.inputs.filename }} not found!"
+            echo "📁 Available files:"
+            ls -la
+            exit 1
+          fi
+
+      - name: Run deobfuscator with debug
+        run: |
+          python -u deobfuscate.py "${{ github.event.inputs.filename }}" 2>&1 | tee "${{ github.event.inputs.output_filename }}"
 
       - name: Upload result
         uses: actions/upload-artifact@v4

@@ -10,7 +10,7 @@ on:
       output_filename:
         description: 'Nama file output hasil deobfuscate'
         required: true
-        default: 'output.txt'
+        default: 'source.py'
 
 jobs:
   deobfuscate:
@@ -25,270 +25,72 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Create deobfuscator script
+      - name: Install decompiler
+        run: pip install uncompyle6
+
+      - name: Extract and decompile
         run: |
-          cat > deobfuscate.py << 'EOF'
-          import base64
-          import marshal
-          import re
-          import dis
-          import zlib
-          import gzip
-          import lzma
-          import bz2
-          import types
-          import sys
-          import traceback
-          import codecs
+          cat > extract.py << 'EOF'
+          import sys, re, marshal, lzma, zlib, bz2, gzip, base64, os, codecs, uncompyle6
 
-          def recursive_disassemble(code_obj):
-              instructions = list(dis.get_instructions(code_obj))
-              all_instructions = instructions.copy()
-              for instr in instructions:
-                  if instr.opname == "LOAD_CONST" and isinstance(instr.argval, types.CodeType):
-                      nested_instructions = recursive_disassemble(instr.argval)
-                      all_instructions.extend(nested_instructions)
-              return all_instructions
-
-          def convert_to_bytecode(disassembled):
-              for instr in disassembled:
-                  print(f"{instr.offset} {instr.opname} {instr.arg} ({instr.argrepr})")
-
-          def zlib_loop(disassembled):
-              while True:
-                  for instr in disassembled:
-                      if instr.opname == 'LOAD_CONST' and isinstance(instr.argval, bytes):
-                          try:
-                              decompressed = zlib.decompress(instr.argval)
-                              unmarshalled = marshal.loads(decompressed)
-                              disassembled = recursive_disassemble(unmarshalled)
-                              break
-                          except Exception as e:
-                              continue
-                  else:
-                      break
-              return disassembled
-
-          def lzma_loop(disassembled):
-              while True:
-                  for instr in disassembled:
-                      if instr.opname == 'LOAD_CONST' and isinstance(instr.argval, bytes):
-                          try:
-                              decompressed = lzma.decompress(instr.argval)
-                              unmarshalled = marshal.loads(decompressed)
-                              disassembled = recursive_disassemble(unmarshalled)
-                              break
-                          except Exception as e:
-                              continue
-                  else:
-                      break
-              return disassembled
-
-          def base64_loop(disassembled):
-              while True:
-                  for instr in disassembled:
-                      if instr.opname == 'LOAD_CONST' and isinstance(instr.argval, bytes):
-                          try:
-                              decoded = base64.b64decode(instr.argval)
-                              unmarshalled = marshal.loads(decoded)
-                              disassembled = recursive_disassemble(unmarshalled)
-                              break
-                          except Exception as e:
-                              continue
-                  else:
-                      break
-              return disassembled
-
-          def bz2_loop(disassembled):
-              while True:
-                  for instr in disassembled:
-                      if instr.opname == 'LOAD_CONST' and isinstance(instr.argval, bytes):
-                          try:
-                              decompressed = bz2.decompress(instr.argval)
-                              unmarshalled = marshal.loads(decompressed)
-                              disassembled = recursive_disassemble(unmarshalled)
-                              break
-                          except Exception as e:
-                              continue
-                  else:
-                      break
-              return disassembled
-
-          def gzip_loop(disassembled):
-              while True:
-                  for instr in disassembled:
-                      if instr.opname == 'LOAD_CONST' and isinstance(instr.argval, bytes):
-                          try:
-                              decompressed = gzip.decompress(instr.argval)
-                              unmarshalled = marshal.loads(decompressed)
-                              disassembled = recursive_disassemble(unmarshalled)
-                              break
-                          except Exception as e:
-                              continue
-                  else:
-                      break
-              return disassembled
-
-          def get_second_method(disassembled):
-              i = len(disassembled)
-              for instr in range(i):
-                  if disassembled[instr].argval == 'loads':
-                      j = instr
-                      break
-              second_method = disassembled[j+2].argval
-              return second_method
-
-          def stage1(obfuscated):
-              disassembled = None
-
-              # base64
-              match = re.search(r'binascii.a2b_base64\(b\'(.*?)\'\)', obfuscated)
-              if match:
-                  print("[+] Found base64")
-                  encoded = match.group(1)
-                  encoded = encoded.encode('utf-8')
-                  encoded = base64.b64decode(encoded)
-                  unmarshalled = marshal.loads(encoded)
-                  disassembled = recursive_disassemble(unmarshalled)
-
-              # lzma
-              if not disassembled:
-                  match = re.search(r'lzma.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
-                  if match:
-                      print("[+] Found lzma")
-                      match_str = match.group(1)
-                      # Use codecs.escape_decode to convert escaped string to bytes
-                      try:
-                          match_bytes = codecs.escape_decode(match_str)[0]
-                      except:
-                          # fallback: encode as latin1
-                          match_bytes = match_str.encode('latin1')
-                      try:
-                          decompressed = lzma.decompress(match_bytes)
-                          unmarshalled = marshal.loads(decompressed)
-                          disassembled = recursive_disassemble(unmarshalled)
-                      except Exception as e:
-                          print(f"[-] lzma decompress failed: {e}")
-
-              # bz2
-              if not disassembled:
-                  match = re.search(r'bz2.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
-                  if match:
-                      print("[+] Found bz2")
-                      match_str = match.group(1)
-                      try:
-                          match_bytes = codecs.escape_decode(match_str)[0]
-                      except:
-                          match_bytes = match_str.encode('latin1')
-                      try:
-                          decompressed = bz2.decompress(match_bytes)
-                          unmarshalled = marshal.loads(decompressed)
-                          disassembled = recursive_disassemble(unmarshalled)
-                      except Exception as e:
-                          print(f"[-] bz2 decompress failed: {e}")
-
-              # gzip
-              if not disassembled:
-                  match = re.search(r'gzip.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
-                  if match:
-                      print("[+] Found gzip")
-                      match_str = match.group(1)
-                      try:
-                          match_bytes = codecs.escape_decode(match_str)[0]
-                      except:
-                          match_bytes = match_str.encode('latin1')
-                      try:
-                          decompressed = gzip.decompress(match_bytes)
-                          unmarshalled = marshal.loads(decompressed)
-                          disassembled = recursive_disassemble(unmarshalled)
-                      except Exception as e:
-                          print(f"[-] gzip decompress failed: {e}")
-
-              # zlib
-              if not disassembled:
-                  match = re.search(r'zlib.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
-                  if match:
-                      print("[+] Found zlib")
-                      match_str = match.group(1)
-                      try:
-                          match_bytes = codecs.escape_decode(match_str)[0]
-                      except:
-                          match_bytes = match_str.encode('latin1')
-                      try:
-                          decompressed = zlib.decompress(match_bytes)
-                          unmarshalled = marshal.loads(decompressed)
-                          disassembled = recursive_disassemble(unmarshalled)
-                      except Exception as e:
-                          print(f"[-] zlib decompress failed: {e}")
-
-              if not disassembled:
-                  # Try to load as marshal directly from the file content (if it's a .pyc)
-                  try:
-                      # Read raw binary
-                      with open(sys.argv[1], 'rb') as f:
-                          raw_data = f.read()
-                      # Try to skip the first 16 bytes if it's a pyc header
-                      if raw_data[:4] == b'\x42\x0d\x0d\x0a' or raw_data[:4] == b'\x61\x0d\x0d\x0a':
-                          raw_data = raw_data[16:]
-                      unmarshalled = marshal.loads(raw_data)
-                      disassembled = recursive_disassemble(unmarshalled)
-                      print("[+] Loaded marshal from binary file")
-                  except Exception as e:
-                      print(f"[-] Failed to load marshal from binary: {e}")
-
-              if not disassembled:
-                  print("[-] Failed to extract any code. Check if file is valid.")
-                  sys.exit(1)
-
-              while True:
-                  try:
-                      second_method = get_second_method(disassembled)
-                  except:
-                      break
-                  if 'zlib' in second_method:
-                      disassembled = zlib_loop(disassembled)
-                  elif 'lzma' in second_method:
-                      disassembled = lzma_loop(disassembled)
-                  elif 'binascii' in second_method:
-                      disassembled = base64_loop(disassembled)
-                  elif 'bz2' in second_method:
-                      disassembled = bz2_loop(disassembled)
-                  elif 'gzip' in second_method:
-                      disassembled = gzip_loop(disassembled)
-                  else:
-                      break
-              convert_to_bytecode(disassembled)
-
-          if __name__ == "__main__":
-              if len(sys.argv) < 2:
-                  print("Usage: python deobfuscate.py <input_file>")
-                  sys.exit(1)
-
+          def extract_bytes_from_string(expr):
+              # Extract raw bytes from string literal with escapes
               try:
-                  with open(sys.argv[1], 'r', encoding='utf-8', errors='ignore') as f:
-                      obfuscated = f.read()
-                  stage1(obfuscated)
-              except Exception as e:
-                  print(f"Error: {e}")
-                  traceback.print_exc()
-                  sys.exit(1)
+                  return codecs.escape_decode(expr)[0]
+              except:
+                  return expr.encode('latin1')
+
+          with open(sys.argv[1], 'r', encoding='utf-8', errors='ignore') as f:
+              data = f.read()
+
+          # Try to find compressed data in the file
+          patterns = [
+              (r'lzma\.decompress\(b\'(.*?)\'\)', lzma.decompress),
+              (r'zlib\.decompress\(b\'(.*?)\'\)', zlib.decompress),
+              (r'bz2\.decompress\(b\'(.*?)\'\)', bz2.decompress),
+              (r'gzip\.decompress\(b\'(.*?)\'\)', gzip.decompress),
+              (r'base64\.b64decode\(b\'(.*?)\'\)', lambda x: base64.b64decode(x)),
+              (r'binascii\.a2b_base64\(b\'(.*?)\'\)', lambda x: base64.b64decode(x))
+          ]
+
+          code_obj = None
+          for pat, decomp_func in patterns:
+              m = re.search(pat, data, re.DOTALL)
+              if m:
+                  raw_bytes = extract_bytes_from_string(m.group(1))
+                  try:
+                      decompressed = decomp_func(raw_bytes)
+                      code_obj = marshal.loads(decompressed)
+                      break
+                  except:
+                      continue
+
+          # If no compressed data found, try reading as raw marshal (maybe pyc)
+          if not code_obj:
+              with open(sys.argv[1], 'rb') as f:
+                  raw = f.read()
+              if raw[:4] in (b'\x42\x0d\x0d\x0a', b'\x61\x0d\x0d\x0a'):
+                  raw = raw[16:]
+              try:
+                  code_obj = marshal.loads(raw)
+              except:
+                  pass
+
+          if not code_obj:
+              print("Failed to extract code object.")
+              sys.exit(1)
+
+          # Decompile code object to source
+          with open(sys.argv[2], 'w', encoding='utf-8') as out:
+              uncompyle6.decompile_file(code_obj, out)
           EOF
 
-      - name: Check input file
+      - name: Run extractor
         run: |
-          if [ ! -f "${{ github.event.inputs.filename }}" ]; then
-            echo "❌ File ${{ github.event.inputs.filename }} not found!"
-            echo "📁 Available files:"
-            ls -la
-            exit 1
-          fi
-
-      - name: Run deobfuscator
-        run: |
-          python -u deobfuscate.py "${{ github.event.inputs.filename }}" > "${{ github.event.inputs.output_filename }}" 2>&1
+          python extract.py "${{ github.event.inputs.filename }}" "${{ github.event.inputs.output_filename }}"
 
       - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: deobfuscated-result
+          name: deobfuscated-source
           path: ${{ github.event.inputs.output_filename }}

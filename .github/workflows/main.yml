@@ -1,43 +1,23 @@
-name: Deobfuscate with mardec
+name: Deobfuscate Py-Fuscate
 
 on:
   workflow_dispatch:
-    inputs:
-      filename:
-        description: 'Nama file Python yang di-obfuscate'
-        required: true
-        default: 'iyan-en.py'
-      output_filename:
-        description: 'Nama file output hasil deobfuscate'
-        required: true
-        default: 'source.py'
 
 jobs:
   deobfuscate:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Clone mardec
-        run: git clone https://github.com/anbuinfosec/mardec.git
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-
+      - name: Clone deobfuscator
+        run: git clone https://github.com/d33znu75/PyFuscate_deobfscator.git
       - name: Install dependencies
-        run: |
-          pip install -r mardec/requirements.txt
-
-      - name: Run mardec
-        run: |
-          python mardec/main.py "${{ github.event.inputs.filename }}" "${{ github.event.inputs.output_filename }}"
-
-      - name: Upload result
-        uses: actions/upload-artifact@v4
+        run: pip install uncompyle6
+      - name: Deobfuscate
+        run: python PyFuscate_deobfscator/deobfuscate.py iyan-en.py > source.py
+      - uses: actions/upload-artifact@v4
         with:
           name: deobfuscated-source
-          path: ${{ github.event.inputs.output_filename }}
+          path: source.py

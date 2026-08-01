@@ -1,4 +1,4 @@
-name: Deobfuscate Py-Fuscate
+name: Deobfuscate with mardec
 
 on:
   workflow_dispatch:
@@ -20,18 +20,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Clone PyFuscate_deobfscator
-        run: |
-          git clone https://github.com/d33znu75/PyFuscate_deobfscator.git
+      - name: Clone mardec
+        run: git clone https://github.com/anbuinfosec/mardec.git
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Run deobfuscator
+      - name: Install dependencies
         run: |
-          python PyFuscate_deobfscator/deobfuscate.py "${{ github.event.inputs.filename }}" > "${{ github.event.inputs.output_filename }}" 2>&1
+          pip install -r mardec/requirements.txt
+
+      - name: Run mardec
+        run: |
+          python mardec/main.py "${{ github.event.inputs.filename }}" "${{ github.event.inputs.output_filename }}"
 
       - name: Upload result
         uses: actions/upload-artifact@v4

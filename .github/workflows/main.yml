@@ -20,9 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: List files (debug)
-        run: ls -la
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -42,6 +39,7 @@ jobs:
           import types
           import sys
           import traceback
+          import codecs
 
           def recursive_disassemble(code_obj):
               instructions = list(dis.get_instructions(code_obj))
@@ -158,57 +156,85 @@ jobs:
                   match = re.search(r'lzma.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
                   if match:
                       print("[+] Found lzma")
-                      match = match.group(1)
-                      exec_globals = {}
-                      exec(f"match = b'{match}'", exec_globals)
-                      decompressed = lzma.decompress(exec_globals['match'])
-                      unmarshalled = marshal.loads(decompressed)
-                      disassembled = recursive_disassemble(unmarshalled)
+                      match_str = match.group(1)
+                      # Use codecs.escape_decode to convert escaped string to bytes
+                      try:
+                          match_bytes = codecs.escape_decode(match_str)[0]
+                      except:
+                          # fallback: encode as latin1
+                          match_bytes = match_str.encode('latin1')
+                      try:
+                          decompressed = lzma.decompress(match_bytes)
+                          unmarshalled = marshal.loads(decompressed)
+                          disassembled = recursive_disassemble(unmarshalled)
+                      except Exception as e:
+                          print(f"[-] lzma decompress failed: {e}")
 
               # bz2
               if not disassembled:
                   match = re.search(r'bz2.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
                   if match:
                       print("[+] Found bz2")
-                      match = match.group(1)
-                      exec_globals = {}
-                      exec(f"match = b'{match}'", exec_globals)
-                      decompressed = bz2.decompress(exec_globals['match'])
-                      unmarshalled = marshal.loads(decompressed)
-                      disassembled = recursive_disassemble(unmarshalled)
+                      match_str = match.group(1)
+                      try:
+                          match_bytes = codecs.escape_decode(match_str)[0]
+                      except:
+                          match_bytes = match_str.encode('latin1')
+                      try:
+                          decompressed = bz2.decompress(match_bytes)
+                          unmarshalled = marshal.loads(decompressed)
+                          disassembled = recursive_disassemble(unmarshalled)
+                      except Exception as e:
+                          print(f"[-] bz2 decompress failed: {e}")
 
               # gzip
               if not disassembled:
                   match = re.search(r'gzip.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
                   if match:
                       print("[+] Found gzip")
-                      match = match.group(1)
-                      exec_globals = {}
-                      exec(f"match = b'{match}'", exec_globals)
-                      decompressed = gzip.decompress(exec_globals['match'])
-                      unmarshalled = marshal.loads(decompressed)
-                      disassembled = recursive_disassemble(unmarshalled)
+                      match_str = match.group(1)
+                      try:
+                          match_bytes = codecs.escape_decode(match_str)[0]
+                      except:
+                          match_bytes = match_str.encode('latin1')
+                      try:
+                          decompressed = gzip.decompress(match_bytes)
+                          unmarshalled = marshal.loads(decompressed)
+                          disassembled = recursive_disassemble(unmarshalled)
+                      except Exception as e:
+                          print(f"[-] gzip decompress failed: {e}")
 
               # zlib
               if not disassembled:
                   match = re.search(r'zlib.decompress\(b\'(.*?)\'\)', obfuscated, re.DOTALL)
                   if match:
                       print("[+] Found zlib")
-                      match = match.group(1)
-                      exec_globals = {}
-                      exec(f"match = b'{match}'", exec_globals)
-                      decompressed = zlib.decompress(exec_globals['match'])
-                      unmarshalled = marshal.loads(decompressed)
-                      disassembled = recursive_disassemble(unmarshalled)
+                      match_str = match.group(1)
+                      try:
+                          match_bytes = codecs.escape_decode(match_str)[0]
+                      except:
+                          match_bytes = match_str.encode('latin1')
+                      try:
+                          decompressed = zlib.decompress(match_bytes)
+                          unmarshalled = marshal.loads(decompressed)
+                          disassembled = recursive_disassemble(unmarshalled)
+                      except Exception as e:
+                          print(f"[-] zlib decompress failed: {e}")
 
               if not disassembled:
-                  # Try to extract raw bytes from file (maybe already binary)
-                  print("[-] No compression found. Trying to read as marshal directly.")
+                  # Try to load as marshal directly from the file content (if it's a .pyc)
                   try:
-                      unmarshalled = marshal.loads(obfuscated.encode('latin1'))
+                      # Read raw binary
+                      with open(sys.argv[1], 'rb') as f:
+                          raw_data = f.read()
+                      # Try to skip the first 16 bytes if it's a pyc header
+                      if raw_data[:4] == b'\x42\x0d\x0d\x0a' or raw_data[:4] == b'\x61\x0d\x0d\x0a':
+                          raw_data = raw_data[16:]
+                      unmarshalled = marshal.loads(raw_data)
                       disassembled = recursive_disassemble(unmarshalled)
-                  except:
-                      pass
+                      print("[+] Loaded marshal from binary file")
+                  except Exception as e:
+                      print(f"[-] Failed to load marshal from binary: {e}")
 
               if not disassembled:
                   print("[-] Failed to extract any code. Check if file is valid.")
@@ -248,7 +274,7 @@ jobs:
                   sys.exit(1)
           EOF
 
-      - name: Check if input file exists
+      - name: Check input file
         run: |
           if [ ! -f "${{ github.event.inputs.filename }}" ]; then
             echo "❌ File ${{ github.event.inputs.filename }} not found!"
@@ -257,9 +283,9 @@ jobs:
             exit 1
           fi
 
-      - name: Run deobfuscator with debug
+      - name: Run deobfuscator
         run: |
-          python -u deobfuscate.py "${{ github.event.inputs.filename }}" 2>&1 | tee "${{ github.event.inputs.output_filename }}"
+          python -u deobfuscate.py "${{ github.event.inputs.filename }}" > "${{ github.event.inputs.output_filename }}" 2>&1
 
       - name: Upload result
         uses: actions/upload-artifact@v4

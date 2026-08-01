@@ -20,74 +20,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clone PyFuscate_deobfscator
+        run: |
+          git clone https://github.com/d33znu75/PyFuscate_deobfscator.git
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Install decompiler
-        run: pip install uncompyle6
-
-      - name: Extract and decompile
+      - name: Run deobfuscator
         run: |
-          cat > extract.py << 'EOF'
-          import sys, re, marshal, lzma, zlib, bz2, gzip, base64, os, codecs, uncompyle6
-
-          def extract_bytes_from_string(expr):
-              # Extract raw bytes from string literal with escapes
-              try:
-                  return codecs.escape_decode(expr)[0]
-              except:
-                  return expr.encode('latin1')
-
-          with open(sys.argv[1], 'r', encoding='utf-8', errors='ignore') as f:
-              data = f.read()
-
-          # Try to find compressed data in the file
-          patterns = [
-              (r'lzma\.decompress\(b\'(.*?)\'\)', lzma.decompress),
-              (r'zlib\.decompress\(b\'(.*?)\'\)', zlib.decompress),
-              (r'bz2\.decompress\(b\'(.*?)\'\)', bz2.decompress),
-              (r'gzip\.decompress\(b\'(.*?)\'\)', gzip.decompress),
-              (r'base64\.b64decode\(b\'(.*?)\'\)', lambda x: base64.b64decode(x)),
-              (r'binascii\.a2b_base64\(b\'(.*?)\'\)', lambda x: base64.b64decode(x))
-          ]
-
-          code_obj = None
-          for pat, decomp_func in patterns:
-              m = re.search(pat, data, re.DOTALL)
-              if m:
-                  raw_bytes = extract_bytes_from_string(m.group(1))
-                  try:
-                      decompressed = decomp_func(raw_bytes)
-                      code_obj = marshal.loads(decompressed)
-                      break
-                  except:
-                      continue
-
-          # If no compressed data found, try reading as raw marshal (maybe pyc)
-          if not code_obj:
-              with open(sys.argv[1], 'rb') as f:
-                  raw = f.read()
-              if raw[:4] in (b'\x42\x0d\x0d\x0a', b'\x61\x0d\x0d\x0a'):
-                  raw = raw[16:]
-              try:
-                  code_obj = marshal.loads(raw)
-              except:
-                  pass
-
-          if not code_obj:
-              print("Failed to extract code object.")
-              sys.exit(1)
-
-          # Decompile code object to source
-          with open(sys.argv[2], 'w', encoding='utf-8') as out:
-              uncompyle6.decompile_file(code_obj, out)
-          EOF
-
-      - name: Run extractor
-        run: |
-          python extract.py "${{ github.event.inputs.filename }}" "${{ github.event.inputs.output_filename }}"
+          python PyFuscate_deobfscator/deobfuscate.py "${{ github.event.inputs.filename }}" > "${{ github.event.inputs.output_filename }}" 2>&1
 
       - name: Upload result
         uses: actions/upload-artifact@v4
